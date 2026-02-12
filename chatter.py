@@ -39,6 +39,8 @@ class Chatter:
         self.player_loss_message = self._format_message(config.messages.loss_message)
         self.spectator_greeting = self._format_message(config.messages.greeting_spectators)
         self.spectator_goodbye = self._format_message(config.messages.goodbye_spectators)
+        self.opponent_name = game_information.black_name if lichess_game.is_white else game_information.white_name
+        self.auto_reply_message = ("Hello, I am @Stonishwall's lichess bot, learning from games, chill and fun.")
         self.print_eval_rooms: set[str] = set()
         self.hint_counter: int = 0
 
@@ -62,6 +64,16 @@ class Chatter:
             await self._handle_command(chat_message)
         elif chat_message.text.lower() in ['firsthint', 'secondhint', 'thirdhint', 'fourthhint', 'fifthhint', 'sixthhint', 'seventhhint']:
             await self._handle_hint_variation(chat_message)
+        elif self._should_auto_reply(chat_message):
+            await self.api.send_chat_message(self.game_info.id_, chat_message.room, self.auto_reply_message)
+
+
+    def _should_auto_reply(self, chat_message: Chat_Message) -> bool:
+        return (
+            chat_message.room == 'player'
+            and chat_message.username == self.opponent_name
+            and bool(chat_message.text.strip())
+        )
 
     async def print_eval(self) -> None:
         if not self.game_info.increment_ms and self.lichess_game.own_time < 30.0:
