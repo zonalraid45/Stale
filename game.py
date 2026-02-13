@@ -117,7 +117,7 @@ class Game:
                 await chatter.send_outcome_goodbyes(event, info)  
                 break
 
-            if has_updated:
+            if has_updated and lichess_game.is_our_turn:
                 self.move_task = asyncio.create_task(self._make_move(lichess_game, chatter))
 
         abortion_task.cancel()
@@ -174,13 +174,24 @@ class Game:
 
 
 
-    async def _make_move(self, lichess_game: Lichess_Game, chatter: Chatter) -> None:
+    async def _make_move(self, lichess_game: Lichess_Game, chatter: Chatter, retries_left: int = 2) -> None:
         lichess_move = await lichess_game.make_move()
         if lichess_move.resign:
             await self.api.resign_game(self.game_id)
         else:
+            move_sent = await self.api.send_move(self.game_id, lichess_move.uci_move, lichess_move.offer_draw)
+
+            if not move_sent:
+                lichess_game.board.pop()
+                if retries_left > 0 and lichess_game.is_our_turn:
+                    print(f'Failed to send move {lichess_move.uci_move}. Retrying ...')
+                    await asyncio.sleep(0.5)
+                    await self._make_move(lichess_game, chatter, retries_left - 1)
+                else:
+                    print(f'Failed to send move {lichess_move.uci_move}. Waiting for next game state update.')
+                return
+
             self.bot_offered_draw = lichess_move.offer_draw
-            await self.api.send_move(self.game_id, lichess_move.uci_move, lichess_move.offer_draw)
             await chatter.print_eval()
         self.move_task = None
 
