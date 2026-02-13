@@ -47,6 +47,7 @@ class Chatter:
         self.ai_model = os.getenv('AI_MODEL', 'gpt-4o-mini')
         self.print_eval_rooms: set[str] = set()
         self.hint_counter: int = 0
+        self.auto_reply_tasks: set[asyncio.Task[None]] = set()
 
     async def handle_chat_message(self, chatLine_Event: dict) -> None:
         chat_message = Chat_Message.from_chatLine_event(chatLine_Event)
@@ -69,8 +70,9 @@ class Chatter:
         elif chat_message.text.lower() in ['firsthint', 'secondhint', 'thirdhint', 'fourthhint', 'fifthhint', 'sixthhint', 'seventhhint']:
             await self._handle_hint_variation(chat_message)
         elif self._should_auto_reply(chat_message):
-            auto_reply_message = await self._build_auto_reply(chat_message.text)
-            await self.api.send_chat_message(self.game_info.id_, chat_message.room, auto_reply_message)
+            task = asyncio.create_task(self._send_auto_reply(chat_message.room, chat_message.text))
+            self.auto_reply_tasks.add(task)
+            task.add_done_callback(self.auto_reply_tasks.discard)
 
 
     def _should_auto_reply(self, chat_message: Chat_Message) -> bool:
@@ -87,6 +89,15 @@ class Chatter:
             prompt in message
             for prompt in ['who made you', 'who created you', 'your creator', 'made you', 'created you']
         )
+
+
+    async def _send_auto_reply(self, room: str, message_text: str) -> None:
+        try:
+            auto_reply_message = await asyncio.wait_for(self._build_auto_reply(message_text), timeout=2.5)
+        except TimeoutError:
+            return
+
+        await self.api.send_chat_message(self.game_info.id_, room, auto_reply_message)
 
 
     async def _build_auto_reply(self, message_text: str) -> str:
