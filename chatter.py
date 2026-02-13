@@ -2,6 +2,7 @@ import os
 import platform
 import time
 import asyncio
+import json
 from collections import defaultdict
 from typing import Any
 
@@ -39,6 +40,11 @@ class Chatter:
         self.player_loss_message = self._format_message(config.messages.loss_message)
         self.spectator_greeting = self._format_message(config.messages.greeting_spectators)
         self.spectator_goodbye = self._format_message(config.messages.goodbye_spectators)
+        self.opponent_name = game_information.black_name if lichess_game.is_white else game_information.white_name
+        self.creator_name = 'Stonishwall'
+        self.bot_identity = 'I am a Lichess bot improving from games.'
+        self.ai_api_key = os.getenv('AI', '').strip()
+        self.ai_model = os.getenv('AI_MODEL', 'gpt-4o-mini')
         self.print_eval_rooms: set[str] = set()
         self.hint_counter: int = 0
 
@@ -62,6 +68,95 @@ class Chatter:
             await self._handle_command(chat_message)
         elif chat_message.text.lower() in ['firsthint', 'secondhint', 'thirdhint', 'fourthhint', 'fifthhint', 'sixthhint', 'seventhhint']:
             await self._handle_hint_variation(chat_message)
+        elif self._should_auto_reply(chat_message):
+            auto_reply_message = await self._build_auto_reply(chat_message.text)
+            await self.api.send_chat_message(self.game_info.id_, chat_message.room, auto_reply_message)
+
+
+    def _should_auto_reply(self, chat_message: Chat_Message) -> bool:
+        return (
+            chat_message.room == 'player'
+            and chat_message.username == self.opponent_name
+            and bool(chat_message.text.strip())
+        )
+
+
+    def _is_creator_question(self, message_text: str) -> bool:
+        message = message_text.lower()
+        return any(
+            prompt in message
+            for prompt in ['who made you', 'who created you', 'your creator', 'made you', 'created you']
+        )
+
+
+    async def _build_auto_reply(self, message_text: str) -> str:
+        if self._is_creator_question(message_text):
+            return self._limit_words(f'{self.creator_name} made me.')
+
+        message = message_text.strip()
+        if not message:
+            return self._limit_words('Thanks for the message.')
+
+        lower_message = message_text.lower()
+        if any(prompt in lower_message for prompt in ['who are you', 'what are you']):
+            return self._limit_words(self.bot_identity)
+
+        ai_reply = await self._generate_ai_reply(message)
+        if ai_reply:
+            return self._limit_words(ai_reply)
+
+        if '?' in message_text:
+            return self._limit_words('Good question. I am still learning from every game I play.')
+
+        reply = f'I hear you: {message}'
+        return self._limit_words(reply)
+
+
+    async def _generate_ai_reply(self, message_text: str) -> str | None:
+        if not self.ai_api_key:
+            return None
+
+        system_prompt = (
+            'You are a fun, chill Lichess bot improving from games. '
+            'Creator is Stonishwall but keep it private unless directly asked who made you. '
+            'No emojis. Reply in maximum 15 words.'
+        )
+
+        payload = {
+            'model': self.ai_model,
+            'messages': [
+                {'role': 'system', 'content': system_prompt},
+                {'role': 'user', 'content': message_text}
+            ],
+            'temperature': 0.7
+        }
+
+        headers = {
+            'Authorization': f'Bearer {self.ai_api_key}',
+            'Content-Type': 'application/json'
+        }
+
+        try:
+            async with self.api.external_session.post(
+                'https://api.openai.com/v1/chat/completions',
+                headers=headers,
+                data=json.dumps(payload),
+                timeout=8
+            ) as response:
+                if response.status != 200:
+                    return None
+
+                data = await response.json()
+                content = data['choices'][0]['message']['content'].strip()
+                return content
+        except Exception:
+            return None
+
+    def _limit_words(self, text: str, max_words: int = 15) -> str:
+        words = text.split()
+        if len(words) <= max_words:
+            return text
+        return ' '.join(words[:max_words])
 
     async def print_eval(self) -> None:
         if not self.game_info.increment_ms and self.lichess_game.own_time < 30.0:
@@ -451,5 +546,4 @@ class Chatter:
             final_message = initial_message
 
         return final_message
-
 

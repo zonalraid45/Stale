@@ -9,6 +9,8 @@ on:
 
 env:
   LICHESS_TOKEN: ${{ secrets.LICHESS_TOKEN }}
+  AI: ${{ secrets.AI }}
+  AI_MODEL: gpt-4o-mini
 
 jobs:
   deploy-bot:
@@ -68,6 +70,9 @@ jobs:
         
     - name: Launch bot
       timeout-minutes: 340
+      env:
+        AI: ${{ secrets.AI }}
+        AI_MODEL: gpt-4o-mini
       run: |
         echo "🤖 Starting bot..."
         python3 user_interface.py -u
